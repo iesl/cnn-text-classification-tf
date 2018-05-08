@@ -8,14 +8,29 @@ import datetime
 import data_helpers
 from text_cnn import TextCNN
 from tensorflow.contrib import learn
+import time
 
 # Parameters
 # ==================================================
 
 # Data loading params
-tf.flags.DEFINE_float("dev_sample_percentage", .1, "Percentage of the training data to use for validation")
-tf.flags.DEFINE_string("positive_data_file", "./data/rt-polaritydata/rt-polarity.pos", "Data source for the positive data.")
-tf.flags.DEFINE_string("negative_data_file", "./data/rt-polaritydata/rt-polarity.neg", "Data source for the negative data.")
+#tf.flags.DEFINE_float("dev_sample_percentage", .1, "Percentage of the training data to use for validation")
+#tf.flags.DEFINE_string("dataset_type", "QT", "either QT (question type) or ST (sentiment)")
+tf.flags.DEFINE_string("dataset_type", "ST", "either QT (question type) or ST (sentiment)")
+tf.flags.DEFINE_string("test_data_file", "./data/Question_type_split/testing_wo_stop", "Data source for the positive data.")
+#tf.flags.DEFINE_string("training_data_file","./data/Question_type_split/training_sorted_sum_d2_wo_stop","Data source of training data")
+#tf.flags.DEFINE_string("training_data_file","./data/Question_type_split/training_sorted_sum_d23_p1_wo_stop","Data source of training data")
+tf.flags.DEFINE_string("positive_test_data_file", "./data/rt-polaritydata_split/rt-polarity.pos_test_wo_stop", "Data source for the positive data.")
+tf.flags.DEFINE_string("negative_test_data_file", "./data/rt-polaritydata_split/rt-polarity.neg_test_wo_stop", "Data source for the negative data.")
+#tf.flags.DEFINE_string("training_data_file","./data/rt-polaritydata_split/rt-polarity.sorted_train_sum_d2_wo_stop","Data source of training data")
+#tf.flags.DEFINE_string("training_data_file","./data/rt-polaritydata_split/rt-polarity.sorted_train_sum_d12_p1_wo_stop","Data source of training data")
+##tf.flags.DEFINE_string("training_data_file","./data/rt-polaritydata_split/rt-polarity.sorted_train_var_wo_stop","Data source of training data")
+##tf.flags.DEFINE_string("training_data_file","./data/rt-polaritydata_split/rt-polarity.sorted_train_not_norm","Data source of training data")
+tf.flags.DEFINE_string("training_data_file","./data/rt-polaritydata_split/rt-polarity.random_train_wo_stop","Data source of training data")
+#tf.flags.DEFINE_integer("training_data_size",4000, "number of samples in training dataset")
+#tf.flags.DEFINE_integer("training_data_size",500, "number of samples in training dataset")
+tf.flags.DEFINE_integer("training_data_size",2000, "number of samples in training dataset")
+tf.flags.DEFINE_boolean("random_shuffle",True,"whether random shuffle training data")
 
 # Model Hyperparameters
 tf.flags.DEFINE_integer("embedding_dim", 128, "Dimensionality of character embedding (default: 128)")
@@ -28,8 +43,8 @@ tf.flags.DEFINE_float("l2_reg_lambda", 0.0, "L2 regularization lambda (default: 
 tf.flags.DEFINE_integer("batch_size", 64, "Batch Size (default: 64)")
 tf.flags.DEFINE_integer("num_epochs", 200, "Number of training epochs (default: 200)")
 tf.flags.DEFINE_integer("evaluate_every", 100, "Evaluate model on dev set after this many steps (default: 100)")
-tf.flags.DEFINE_integer("checkpoint_every", 100, "Save model after this many steps (default: 100)")
-tf.flags.DEFINE_integer("num_checkpoints", 5, "Number of checkpoints to store (default: 5)")
+tf.flags.DEFINE_integer("checkpoint_every", 1000, "Save model after this many steps (default: 100)")
+tf.flags.DEFINE_integer("num_checkpoints", 2, "Number of checkpoints to store (default: 5)")
 # Misc Parameters
 tf.flags.DEFINE_boolean("allow_soft_placement", True, "Allow device soft device placement")
 tf.flags.DEFINE_boolean("log_device_placement", False, "Log placement of ops on devices")
@@ -41,32 +56,54 @@ for attr, value in sorted(FLAGS.__flags.items()):
     print("{}={}".format(attr.upper(), value))
 print("")
 
+method = "random"
 
+if not FLAGS.random_shuffle:
+    method = os.path.basename(FLAGS.training_data_file)
+
+time_str = datetime.datetime.now().isoformat()
+output_file_name = "./log/"+FLAGS.dataset_type+'_'+method+'_num_sample_'+str(FLAGS.training_data_size)+'_'+time_str
 # Data Preparation
 # ==================================================
 
 # Load data
 print("Loading data...")
-x_text, y = data_helpers.load_data_and_labels(FLAGS.positive_data_file, FLAGS.negative_data_file)
 
+if FLAGS.dataset_type == "ST":
+    x_train_raw, y_train = data_helpers.load_sorted_data_and_labels(FLAGS.training_data_file)
+    x_test_raw, y_dev = data_helpers.load_data_and_labels(FLAGS.positive_test_data_file, FLAGS.negative_test_data_file)
+elif FLAGS.dataset_type == "QT":
+    x_train_raw, y_train = data_helpers.load_QT_data_and_labels(FLAGS.training_data_file)
+    x_test_raw, y_dev = data_helpers.load_QT_data_and_labels(FLAGS.test_data_file)
+x_text = x_train_raw + x_test_raw
 # Build vocabulary
 max_document_length = max([len(x.split(" ")) for x in x_text])
 vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length)
 x = np.array(list(vocab_processor.fit_transform(x_text)))
 
-# Randomly shuffle data
-np.random.seed(10)
-shuffle_indices = np.random.permutation(np.arange(len(y)))
-x_shuffled = x[shuffle_indices]
-y_shuffled = y[shuffle_indices]
+x_train = x[:len(x_train_raw)]
+x_dev = x[len(x_train_raw):]
 
+print FLAGS.random_shuffle
+
+np.random.seed(int(time.time()))
+# Randomly shuffle data
+if FLAGS.random_shuffle == True:
+    shuffle_indices = np.random.permutation(np.arange(len(y_train)))
+    x_train = x_train[shuffle_indices]
+    #print y_train[:10]
+    #print shuffle_indices
+    y_train = y_train[shuffle_indices]
+
+x_train = x_train[:FLAGS.training_data_size]
+y_train = y_train[:FLAGS.training_data_size]
 # Split train/test set
 # TODO: This is very crude, should use cross-validation
-dev_sample_index = -1 * int(FLAGS.dev_sample_percentage * float(len(y)))
-x_train, x_dev = x_shuffled[:dev_sample_index], x_shuffled[dev_sample_index:]
-y_train, y_dev = y_shuffled[:dev_sample_index], y_shuffled[dev_sample_index:]
+#dev_sample_index = -1 * int(FLAGS.dev_sample_percentage * float(len(y)))
+#x_train, x_dev = x_shuffled[:dev_sample_index], x_shuffled[dev_sample_index:]
+#y_train, y_dev = y_shuffled[:dev_sample_index], y_shuffled[dev_sample_index:]
 
-del x, y, x_shuffled, y_shuffled
+del x
 
 print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
 print("Train/Dev split: {:d}/{:d}".format(len(y_train), len(y_dev)))
@@ -151,7 +188,9 @@ with tf.Graph().as_default():
                 [train_op, global_step, train_summary_op, cnn.loss, cnn.accuracy],
                 feed_dict)
             time_str = datetime.datetime.now().isoformat()
-            print("{}: step {}, loss {:g}, acc {:g}".format(time_str, step, loss, accuracy))
+            current_epoch = float(FLAGS.batch_size)*step/FLAGS.training_data_size
+            if step % 10 == 0:
+                print("{}: epoch {}, step {}, loss {:g}, acc {:g}".format(time_str,current_epoch, step, loss, accuracy))
             train_summary_writer.add_summary(summaries, step)
 
         def dev_step(x_batch, y_batch, writer=None):
@@ -167,22 +206,32 @@ with tf.Graph().as_default():
                 [global_step, dev_summary_op, cnn.loss, cnn.accuracy],
                 feed_dict)
             time_str = datetime.datetime.now().isoformat()
-            print("{}: step {}, loss {:g}, acc {:g}".format(time_str, step, loss, accuracy))
+            print("{}: random {}, step {}, loss {:g}, acc {:g}".format(time_str,FLAGS.random_shuffle, step, loss, accuracy))
             if writer:
                 writer.add_summary(summaries, step)
+            return accuracy
 
         # Generate batches
         batches = data_helpers.batch_iter(
             list(zip(x_train, y_train)), FLAGS.batch_size, FLAGS.num_epochs)
         # Training loop. For each batch...
+        best_dev_acc = 0
         for batch in batches:
             x_batch, y_batch = zip(*batch)
             train_step(x_batch, y_batch)
             current_step = tf.train.global_step(sess, global_step)
             if current_step % FLAGS.evaluate_every == 0:
                 print("\nEvaluation:")
-                dev_step(x_dev, y_dev, writer=dev_summary_writer)
+                dev_acc=dev_step(x_dev, y_dev, writer=dev_summary_writer)
+                best_dev_acc = max(dev_acc,best_dev_acc)
                 print("")
             if current_step % FLAGS.checkpoint_every == 0:
                 path = saver.save(sess, checkpoint_prefix, global_step=current_step)
                 print("Saved model checkpoint to {}\n".format(path))
+        dev_acc=dev_step(x_dev, y_dev, writer=dev_summary_writer)
+        best_dev_acc = max(dev_acc,best_dev_acc)
+        print best_dev_acc
+
+delim = '\t'
+with open(output_file_name,'w') as f_out:
+    f_out.write(FLAGS.dataset_type+delim+method+delim+str(FLAGS.training_data_size)+delim+str(best_dev_acc)+'\n')

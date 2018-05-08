@@ -24,6 +24,32 @@ def clean_str(string):
     string = re.sub(r"\s{2,}", " ", string)
     return string.strip().lower()
 
+def load_QT_data_and_labels(training_data_file):
+    y_train = []
+    x_train_raw = []
+    label_d2_y = { "DESC": 2, "ENTY": 1, "ABBR": 0, "HUM": 3, "NUM": 5, "LOC": 4}
+    for line in open(training_data_file):
+        line = line[:-1]
+        arr = line.split('\t')
+        label = arr[0]
+        sent = arr[1]
+        y_train.append([0]*6)
+        y_train[-1][label_d2_y[label]] = 1
+        x_train_raw.append(sent)
+    return x_train_raw, np.array(y_train)
+
+def load_sorted_data_and_labels(training_data_file):
+    y_train = []
+    x_train_raw = []
+    for line in open(training_data_file):
+        line = line[:-1]
+        label, sent, max_score = line.split('\t')
+        if label == '1':
+            y_train.append([0,1])
+        else:
+            y_train.append([1,0])
+        x_train_raw.append(sent)
+    return x_train_raw, np.array(y_train)
 
 def load_data_and_labels(positive_data_file, negative_data_file):
     """
